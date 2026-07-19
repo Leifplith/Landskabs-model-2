@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="theme-color" content="#f3f4f6">
-<title>Fjord Animator v0.3.1 (Build 00024)</title>
+<title>Fjord Animator v0.3.2 (Build 00025)</title>
 <style>
 :root{
   --bg:#f3f4f6; --card:#fff; --text:#111; --muted:#666;
@@ -71,7 +71,7 @@ progress{width:100%;height:16px}
 </head>
 <body>
 <header>
-  <h1>Fjord Animator <span style="font-size:14px;color:#666;font-weight:600">v0.3.1 · Build 00024</span></h1>
+  <h1>Fjord Animator <span style="font-size:14px;color:#666;font-weight:600">v0.3.2 · Build 00025</span></h1>
   <p>Billedets proportioner bevares. Sort = vand, hvid = land.</p>
 </header>
 
@@ -557,15 +557,15 @@ renderBtn.onclick=async()=>{
       ctx.putImageData(id,0,0);
     };
 
-    // MediaRecorder måler virkelig tid. Derfor pauser vi optagelsen under
-    // både afstandsberegninger og selve beregningen af hvert overgangsbillede.
-    // Kun den tid, hvor en færdig frame faktisk vises, tæller med i filmen.
+    // MediaRecorder bruger virkelig tid. Vi pauser kun under de tunge
+    // afstandsberegninger mellem nøglebillederne. Vi pauser IKKE for hvert
+    // enkelt frame, da hyppige pause/resume-kald kan give afkortede filer i Safari.
     const sleep=ms=>new Promise(r=>setTimeout(r,Math.max(0,ms)));
     const waitForEvent=(obj,name)=>new Promise(r=>obj.addEventListener(name,r,{once:true}));
     let pausedMs=0;
     const recordingStart=performance.now();
 
-    async function pauseForCalculation(fn){
+    async function pauseForTransitionCalculation(fn){
       if(recorder.state==="recording"){
         const paused=waitForEvent(recorder,"pause");
         recorder.pause();
@@ -573,12 +573,12 @@ renderBtn.onclick=async()=>{
       }
       const pauseStarted=performance.now();
       const result=fn();
+      pausedMs+=performance.now()-pauseStarted;
       if(recorder.state==="paused"){
         const resumed=waitForEvent(recorder,"resume");
         recorder.resume();
         await resumed;
       }
-      pausedMs+=performance.now()-pauseStarted;
       return result;
     }
 
@@ -600,7 +600,7 @@ renderBtn.onclick=async()=>{
     for(let ti=0;ti<transitions&&!cancelRequested;ti++){
       setStatus(`Beregner overgang ${ti+1} af ${transitions}…`);
 
-      const calculated=await pauseForCalculation(()=>{
+      const calculated=await pauseForTransitionCalculation(()=>{
         const maskB=imageToMask(items[ti+1].img,w,h,threshold,invert,fitMode);
         return {
           maskB,
@@ -614,12 +614,10 @@ renderBtn.onclick=async()=>{
 
       for(let f=0;f<count&&!cancelRequested;f++){
         const u=(f+1)/count;
-        await pauseForCalculation(()=>{
-          for(let i=0;i<frame.length;i++){
-            frame[i]=((1-u)*da[i]+u*db[i])<0?1:0;
-          }
-          draw(frame);
-        });
+        for(let i=0;i<frame.length;i++){
+          frame[i]=((1-u)*da[i]+u*db[i])<0?1:0;
+        }
+        draw(frame);
         await finishFrame();
         setStatus(`Animerer overgang ${ti+1} af ${transitions}\n${Math.round(progress.value)} %`);
       }
@@ -635,6 +633,10 @@ renderBtn.onclick=async()=>{
       }
     }
 
+    // Giv Safari tid til at optage det sidste viste frame og tøm derefter bufferen.
+    await sleep(Math.max(250,1000/fps*2));
+    if(recorder.state==="recording" && typeof recorder.requestData==="function") recorder.requestData();
+    await sleep(150);
     if(recorder.state!=="inactive")recorder.stop();
     await done;
     activeRecorder=null;
@@ -645,18 +647,35 @@ renderBtn.onclick=async()=>{
     }
 
     finishedBlob=new Blob(chunks,{type:mime});
+    if(finishedBlob.size<1000) throw Error("Videofilen blev ikke færdigskrevet. Prøv igen.");
     const ext=mime.includes("mp4")?"mp4":"webm";
     const name=`${safeFilename($("filename").value)}.${ext}`;
 
     finishedFile=new File([finishedBlob],name,{type:mime});
     finishedUrl=URL.createObjectURL(finishedBlob);
 
+    // Kontroller at Safari faktisk kan åbne hele den færdige fil, før der står “Færdig”.
+    let actualDuration=NaN;
+    try{
+      const probe=document.createElement("video");
+      probe.preload="metadata";
+      probe.src=finishedUrl;
+      actualDuration=await new Promise((resolve,reject)=>{
+        const timer=setTimeout(()=>reject(Error("timeout")),8000);
+        probe.onloadedmetadata=()=>{clearTimeout(timer);resolve(probe.duration)};
+        probe.onerror=()=>{clearTimeout(timer);reject(Error("video"))};
+      });
+    }catch{
+      throw Error("Videofilen blev skrevet, men Safari kunne ikke kontrollere, at den var komplet. Prøv igen.");
+    }
+
     downloadButton.href=finishedUrl;
     downloadButton.download=name;
     exportArea.style.display="block";
     shareButton.style.display=(navigator.share?"inline-block":"none");
 
-    setStatus(`Færdig: ${name} · ønsket længde ${duration.toFixed(2)} sek.`);
+    const actualText=Number.isFinite(actualDuration)?` · faktisk længde ${actualDuration.toFixed(2)} sek.`:"";
+    setStatus(`Færdig: ${name} · ønsket længde ${duration.toFixed(2)} sek.${actualText}`);
     progress.value=100;
 
   }catch(e){
@@ -674,7 +693,7 @@ renderBtn.onclick=async()=>{
 </script>
 
 <footer style="max-width:1100px;margin:0 auto 24px;padding:0 16px;color:#666;font-size:13px;text-align:center">
-  Fjord Animator · Version 0.3.1 · Build 00024 · 19. juli 2026
+  Fjord Animator · Version 0.3.2 · Build 00025 · 19. juli 2026
 </footer>
 </body>
 </html>
