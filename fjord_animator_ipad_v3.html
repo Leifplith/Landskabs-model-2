@@ -1,0 +1,407 @@
+<!doctype html>
+<html lang="da">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<title>Fjord Animator 3</title>
+<style>
+:root{
+  --bg:#f3f4f6; --card:#fff; --text:#111; --muted:#686868;
+  --border:#d8d9dd; --accent:#0a84ff; --danger:#d70015; --ok:#248a3d;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);
+font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+header{position:sticky;top:0;z-index:10;padding:14px 16px;
+background:rgba(243,244,246,.94);backdrop-filter:blur(16px);
+border-bottom:1px solid var(--border)}
+h1{font-size:22px;margin:0 0 4px}
+header p{margin:0;color:var(--muted);font-size:14px}
+main{max-width:1100px;margin:auto;padding:16px;display:grid;gap:14px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:14px}
+h2{font-size:17px;margin:0 0 10px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+button,.button{
+  appearance:none;border:0;border-radius:12px;background:var(--accent);color:white;
+  padding:12px 15px;font-size:16px;font-weight:600;cursor:pointer;text-decoration:none
+}
+button.secondary,.button.secondary{background:#e9e9ee;color:#111}
+button.danger{background:var(--danger)}
+button.success,.button.success{background:var(--ok)}
+button:disabled{opacity:.45}
+input[type=file]{display:none}
+label.field{display:grid;gap:5px;min-width:150px;flex:1}
+label.field span{font-size:13px;color:var(--muted)}
+input[type=number],select,input[type=text]{
+  width:100%;font-size:16px;padding:10px;border:1px solid var(--border);
+  border-radius:10px;background:white;color:#111
+}
+.check{display:flex;gap:8px;align-items:center;font-size:15px}
+#list{display:grid;gap:8px}
+.item{
+  display:grid;grid-template-columns:36px 66px 1fr auto;gap:10px;align-items:center;
+  border:1px solid var(--border);border-radius:12px;padding:8px;background:white;
+  touch-action:none; user-select:none;
+}
+.item.dragging{opacity:.55;transform:scale(.99)}
+.handle{font-size:22px;color:#777;text-align:center;cursor:grab}
+.thumb{width:66px;height:48px;object-fit:cover;border-radius:8px;background:#eee;border:1px solid #ddd}
+.name{font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.item-buttons{display:flex;gap:4px}
+.item-buttons button{padding:7px 9px;border-radius:8px;font-size:14px}
+canvas{display:block;width:100%;height:auto;background:white;border-radius:12px;border:1px solid var(--border)}
+progress{width:100%;height:16px}
+#status{font-size:14px;color:var(--muted);margin-top:8px;white-space:pre-wrap}
+.note{font-size:13px;color:var(--muted);line-height:1.45}
+#exportArea{display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)}
+.badge{display:inline-block;background:#e8f2ff;color:#0560b8;border-radius:999px;padding:4px 8px;font-size:12px;font-weight:600}
+@media (min-width:820px){.two{display:grid;grid-template-columns:1.1fr .9fr;gap:14px}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Fjord Animator 3</h1>
+  <p>Træk billederne i rækkefølge. Sort = vand, hvid = land.</p>
+</header>
+
+<main>
+<section class="card">
+  <div class="row" style="justify-content:space-between">
+    <h2>1. Billeder</h2><span class="badge" id="countBadge">0 billeder</span>
+  </div>
+  <div class="row">
+    <label class="button" for="files">Vælg billeder</label>
+    <input id="files" type="file" accept="image/png,image/jpeg,image/tiff,image/bmp" multiple>
+    <button id="clear" class="secondary">Ryd liste</button>
+    <button id="saveProject" class="secondary">Gem projekt</button>
+    <label class="button secondary" for="loadProject">Åbn projekt</label>
+    <input id="loadProject" type="file" accept="application/json">
+  </div>
+  <p class="note">Du behøver ikke omdøbe billederne. Hold fingeren på ☰ og træk et billede op eller ned.</p>
+  <div id="list"></div>
+</section>
+
+<div class="two">
+<section class="card">
+  <h2>2. Filmindstillinger</h2>
+  <div class="row">
+    <label class="field"><span>Filnavn</span><input id="filename" type="text" value="fjord_animation"></label>
+    <label class="field"><span>Længde i sekunder</span><input id="duration" type="number" min="2" max="180" value="30"></label>
+  </div>
+  <div class="row" style="margin-top:10px">
+    <label class="field"><span>Billeder pr. sekund</span>
+      <select id="fps"><option>24</option><option selected>25</option><option>30</option></select>
+    </label>
+    <label class="field"><span>Output</span>
+      <select id="resolution">
+        <option value="source" selected>Som første billede</option>
+        <option value="1280x720">HD 1280×720</option>
+        <option value="1920x1080">Full HD 1920×1080</option>
+      </select>
+    </label>
+  </div>
+  <div class="row" style="margin-top:10px">
+    <label class="field"><span>Sort/hvid-tærskel</span><input id="threshold" type="number" min="0" max="255" value="127"></label>
+    <label class="field"><span>Hold første billede</span><input id="holdStart" type="number" min="0" max="30" step=".5" value="1"></label>
+    <label class="field"><span>Hold sidste billede</span><input id="holdEnd" type="number" min="0" max="30" step=".5" value="1"></label>
+  </div>
+  <label class="check" style="margin-top:12px"><input id="invert" type="checkbox"> Byt sort og hvid om</label>
+</section>
+
+<section class="card">
+  <h2>3. Forhåndsvisning</h2>
+  <canvas id="preview" width="960" height="540"></canvas>
+  <p class="note">Tryk på et miniaturebillede for at vise det stort.</p>
+</section>
+</div>
+
+<section class="card">
+  <h2>4. Generér og gem film</h2>
+  <div class="row">
+    <button id="render">Generér film</button>
+    <button id="cancel" class="danger" disabled>Annullér</button>
+  </div>
+  <progress id="progress" max="100" value="0"></progress>
+  <div id="status">Klar.</div>
+
+  <div id="exportArea">
+    <h2>Filmen er færdig</h2>
+    <div class="row">
+      <button id="shareButton" class="success">Del / gem filmen…</button>
+      <a id="downloadButton" class="button secondary">Gem i Filer</a>
+    </div>
+    <p class="note">
+      “Del / gem filmen…” åbner iPadens delingsark. Her kan du vælge “Gem video”, hvis formatet understøttes,
+      eller “Gem i Filer”. Webappen kan ikke skrive direkte i Fotos uden Apples delingsark.
+    </p>
+  </div>
+</section>
+</main>
+
+<script>
+"use strict";
+const $=id=>document.getElementById(id);
+const filesInput=$("files"), listEl=$("list"), preview=$("preview"), pctx=preview.getContext("2d");
+const renderBtn=$("render"), cancelBtn=$("cancel"), progress=$("progress"), statusEl=$("status");
+const exportArea=$("exportArea"), shareButton=$("shareButton"), downloadButton=$("downloadButton");
+const countBadge=$("countBadge");
+let items=[], cancelRequested=false, activeRecorder=null, dragIndex=null;
+let finishedBlob=null, finishedFile=null, finishedUrl=null;
+
+function setStatus(t){statusEl.textContent=t}
+function updateCount(){countBadge.textContent=`${items.length} billede${items.length===1?"":"r"}`}
+function loadImage(url){return new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=rej;i.src=url})}
+
+filesInput.addEventListener("change",async e=>{
+  for(const file of [...e.target.files]){
+    if(items.length>=30) break;
+    const url=URL.createObjectURL(file), img=await loadImage(url);
+    items.push({file,url,img});
+  }
+  renderList(); if(items[0]) drawPreview(items[0].img); filesInput.value="";
+});
+
+$("clear").onclick=()=>{
+  items.forEach(x=>URL.revokeObjectURL(x.url));items=[];renderList();
+  pctx.clearRect(0,0,preview.width,preview.height)
+};
+
+function renderList(){
+  listEl.innerHTML="";
+  items.forEach((item,i)=>{
+    const row=document.createElement("div"); row.className="item"; row.draggable=true; row.dataset.index=i;
+    const handle=document.createElement("div"); handle.className="handle"; handle.textContent="☰";
+    const img=document.createElement("img"); img.className="thumb"; img.src=item.url; img.onclick=()=>drawPreview(item.img);
+    const name=document.createElement("div"); name.className="name"; name.textContent=`${String(i+1).padStart(2,"0")}  ${item.file.name}`;
+    const btns=document.createElement("div"); btns.className="item-buttons";
+    btns.append(small("↑",()=>move(i,-1)),small("↓",()=>move(i,1)),small("×",()=>removeAt(i)));
+    row.append(handle,img,name,btns);
+    row.addEventListener("dragstart",()=>{dragIndex=i;row.classList.add("dragging")});
+    row.addEventListener("dragend",()=>{dragIndex=null;row.classList.remove("dragging")});
+    row.addEventListener("dragover",e=>e.preventDefault());
+    row.addEventListener("drop",e=>{
+      e.preventDefault(); const to=i;
+      if(dragIndex===null||dragIndex===to)return;
+      const [m]=items.splice(dragIndex,1); items.splice(to,0,m); renderList()
+    });
+    enableTouchDrag(row,i);
+    listEl.append(row);
+  });
+  updateCount();
+}
+function enableTouchDrag(row,index){
+  let active=false;
+  row.addEventListener("touchstart",e=>{
+    if(!e.target.classList.contains("handle"))return;
+    active=true;dragIndex=index;row.classList.add("dragging")
+  },{passive:true});
+  row.addEventListener("touchmove",e=>{
+    if(!active)return; e.preventDefault();
+    const touch=e.touches[0], el=document.elementFromPoint(touch.clientX,touch.clientY), target=el?.closest(".item");
+    if(target){
+      const to=Number(target.dataset.index);
+      if(to!==dragIndex){
+        const [m]=items.splice(dragIndex,1);items.splice(to,0,m);dragIndex=to;renderList()
+      }
+    }
+  },{passive:false});
+  row.addEventListener("touchend",()=>{active=false;dragIndex=null;renderList()});
+}
+function small(t,fn){const b=document.createElement("button");b.textContent=t;b.className="secondary";b.onclick=fn;return b}
+function move(i,d){const j=i+d;if(j<0||j>=items.length)return;[items[i],items[j]]=[items[j],items[i]];renderList()}
+function removeAt(i){URL.revokeObjectURL(items[i].url);items.splice(i,1);renderList()}
+function drawPreview(img){
+  const s=Math.min(preview.width/img.width,preview.height/img.height),w=img.width*s,h=img.height*s;
+  pctx.fillStyle="white";pctx.fillRect(0,0,preview.width,preview.height);
+  pctx.drawImage(img,(preview.width-w)/2,(preview.height-h)/2,w,h)
+}
+
+$("saveProject").onclick=()=>{
+  const project={
+    version:3,
+    settings:{
+      filename:$("filename").value,duration:$("duration").value,fps:$("fps").value,
+      resolution:$("resolution").value,threshold:$("threshold").value,
+      holdStart:$("holdStart").value,holdEnd:$("holdEnd").value,invert:$("invert").checked
+    },
+    order:items.map(x=>x.file.name)
+  };
+  const blob=new Blob([JSON.stringify(project,null,2)],{type:"application/json"});
+  const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="fjord_animator_projekt.json";a.click()
+};
+$("loadProject").addEventListener("change",async e=>{
+  const f=e.target.files[0];if(!f)return;
+  const p=JSON.parse(await f.text()),s=p.settings||{};
+  for(const k of ["filename","duration","fps","resolution","threshold","holdStart","holdEnd"])
+    if(s[k]!==undefined) $(k).value=s[k];
+  $("invert").checked=!!s.invert;
+  if(Array.isArray(p.order)&&items.length){
+    const map=new Map(items.map(x=>[x.file.name,x])), reordered=[];
+    p.order.forEach(n=>{if(map.has(n)){reordered.push(map.get(n));map.delete(n)}});
+    items=[...reordered,...map.values()];renderList()
+  }
+  e.target.value="";
+});
+
+function getOutputSize(){
+  const v=$("resolution").value;
+  if(v==="source"){let w=items[0].img.width,h=items[0].img.height;return[w-w%2,h-h%2]}
+  return v.split("x").map(Number)
+}
+function imageToMask(img,w,h,threshold,invert){
+  const c=document.createElement("canvas");c.width=w;c.height=h;
+  const x=c.getContext("2d",{willReadFrequently:true});
+  x.imageSmoothingEnabled=false;x.drawImage(img,0,0,w,h);
+  const d=x.getImageData(0,0,w,h).data,m=new Uint8Array(w*h);
+  for(let i=0,p=0;i<d.length;i+=4,p++){
+    const g=d[i]*.299+d[i+1]*.587+d[i+2]*.114;
+    let water=g<threshold;if(invert)water=!water;m[p]=water?1:0
+  }
+  return m
+}
+function chamfer(mask,w,h,target){
+  const INF=1e9,d=new Float32Array(w*h),diag=1.41421356;
+  for(let i=0;i<d.length;i++)d[i]=mask[i]===target?0:INF;
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++){
+    const i=y*w+x;let v=d[i];
+    if(x)v=Math.min(v,d[i-1]+1);if(y)v=Math.min(v,d[i-w]+1);
+    if(x&&y)v=Math.min(v,d[i-w-1]+diag);
+    if(x<w-1&&y)v=Math.min(v,d[i-w+1]+diag);d[i]=v
+  }
+  for(let y=h-1;y>=0;y--)for(let x=w-1;x>=0;x--){
+    const i=y*w+x;let v=d[i];
+    if(x<w-1)v=Math.min(v,d[i+1]+1);if(y<h-1)v=Math.min(v,d[i+w]+1);
+    if(x<w-1&&y<h-1)v=Math.min(v,d[i+w+1]+diag);
+    if(x&&y<h-1)v=Math.min(v,d[i+w-1]+diag);d[i]=v
+  }
+  return d
+}
+function signedDistance(mask,w,h){
+  const a=chamfer(mask,w,h,1),b=chamfer(mask,w,h,0),s=new Float32Array(w*h);
+  for(let i=0;i<s.length;i++)s[i]=a[i]-b[i];return s
+}
+function smoothstep(t){return t*t*(3-2*t)}
+function chooseMime(){
+  return[
+    "video/mp4;codecs=h264","video/mp4",
+    "video/webm;codecs=vp9","video/webm"
+  ].find(x=>window.MediaRecorder&&MediaRecorder.isTypeSupported(x))||""
+}
+function safeFilename(name){
+  const clean=(name||"fjord_animation").trim().replace(/[^\p{L}\p{N}_-]+/gu,"_");
+  return clean||"fjord_animation"
+}
+
+shareButton.onclick=async()=>{
+  if(!finishedFile)return;
+  try{
+    if(navigator.canShare && navigator.canShare({files:[finishedFile]})){
+      await navigator.share({files:[finishedFile],title:"Fjord-animation"});
+    }else{
+      alert("Deling af videofiler understøttes ikke i denne Safari-version. Brug knappen “Gem i Filer”.");
+    }
+  }catch(e){
+    if(e.name!=="AbortError") alert(e.message||String(e));
+  }
+};
+
+cancelBtn.onclick=()=>{
+  cancelRequested=true;setStatus("Annullerer…");
+  if(activeRecorder&&activeRecorder.state!=="inactive")activeRecorder.stop()
+};
+
+renderBtn.onclick=async()=>{
+  try{
+    if(items.length<2||items.length>30)throw Error("Vælg mellem 2 og 30 billeder.");
+    const duration=Number($("duration").value),fps=Number($("fps").value),
+      threshold=Number($("threshold").value),holdStart=Number($("holdStart").value),
+      holdEnd=Number($("holdEnd").value),invert=$("invert").checked;
+    if(duration<2||duration>180)throw Error("Længden skal være mellem 2 og 180 sekunder.");
+    if(holdStart+holdEnd>=duration)throw Error("Holdetiderne er for lange.");
+
+    const [w,h]=getOutputSize(),mime=chooseMime();
+    if(!mime)throw Error("Safari kan ikke optage video på denne iPad-version.");
+
+    renderBtn.disabled=true;cancelBtn.disabled=false;cancelRequested=false;
+    exportArea.style.display="none";progress.value=0;
+
+    if(finishedUrl)URL.revokeObjectURL(finishedUrl);
+    finishedBlob=finishedFile=finishedUrl=null;
+
+    const canvas=document.createElement("canvas");canvas.width=w;canvas.height=h;
+    const ctx=canvas.getContext("2d",{alpha:false}),stream=canvas.captureStream(fps),chunks=[];
+    const recorder=new MediaRecorder(stream,{
+      mimeType:mime,videoBitsPerSecond:Math.max(4e6,w*h*fps*.08)
+    });
+    activeRecorder=recorder;
+    recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)};
+    const done=new Promise(r=>recorder.onstop=r);recorder.start(1000);
+
+    const total=Math.round(duration*fps),sf=Math.round(holdStart*fps),
+      ef=Math.round(holdEnd*fps),transTotal=total-sf-ef,
+      transitions=items.length-1,base=Math.floor(transTotal/transitions),extra=transTotal%transitions;
+    let rendered=0;
+
+    const draw=m=>{
+      const id=ctx.createImageData(w,h),d=id.data;
+      for(let i=0,p=0;i<m.length;i++,p+=4){
+        const v=m[i]?0:255;d[p]=d[p+1]=d[p+2]=v;d[p+3]=255
+      }
+      ctx.putImageData(id,0,0)
+    };
+    const wait=()=>new Promise(r=>setTimeout(r,1000/fps));
+
+    let maskA=imageToMask(items[0].img,w,h,threshold,invert);draw(maskA);
+    for(let i=0;i<sf&&!cancelRequested;i++){
+      await wait();progress.value=++rendered/total*100
+    }
+
+    for(let ti=0;ti<transitions&&!cancelRequested;ti++){
+      setStatus(`Beregner overgang ${ti+1} af ${transitions}…`);
+      const maskB=imageToMask(items[ti+1].img,w,h,threshold,invert),
+        da=signedDistance(maskA,w,h),db=signedDistance(maskB,w,h),
+        count=base+(ti<extra?1:0),frame=new Uint8Array(w*h);
+
+      for(let f=0;f<count&&!cancelRequested;f++){
+        const u=smoothstep(f/Math.max(1,count-1));
+        for(let i=0;i<frame.length;i++)
+          frame[i]=((1-u)*da[i]+u*db[i])<0?1:0;
+        draw(frame);await wait();
+        progress.value=++rendered/total*100;
+        setStatus(`Animerer overgang ${ti+1} af ${transitions}\n${Math.round(progress.value)} %`)
+      }
+      maskA=maskB
+    }
+
+    draw(maskA);
+    for(let i=0;i<ef&&!cancelRequested;i++){
+      await wait();progress.value=++rendered/total*100
+    }
+
+    if(recorder.state!=="inactive")recorder.stop();
+    await done;activeRecorder=null;
+    if(cancelRequested){setStatus("Annulleret.");return}
+
+    finishedBlob=new Blob(chunks,{type:mime});
+    const ext=mime.includes("mp4")?"mp4":"webm";
+    const name=`${safeFilename($("filename").value)}.${ext}`;
+    finishedFile=new File([finishedBlob],name,{type:mime});
+    finishedUrl=URL.createObjectURL(finishedBlob);
+
+    downloadButton.href=finishedUrl;
+    downloadButton.download=name;
+    exportArea.style.display="block";
+    shareButton.style.display=(navigator.share?"inline-block":"none");
+    setStatus(`Færdig: ${name}`);
+    progress.value=100;
+  }catch(e){
+    alert(e.message||String(e));setStatus("Stoppet.")
+  }finally{
+    renderBtn.disabled=false;cancelBtn.disabled=true
+  }
+};
+</script>
+</body>
+</html>
