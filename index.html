@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="theme-color" content="#f3f4f6">
-<title>Fjord Animator v0.4.7 (Build 00033)</title>
+<title>Fjord Animator v0.5.0 (Build 00035)</title>
 <style>
 :root{
   --bg:#f3f4f6; --card:#fff; --text:#111; --muted:#666;
@@ -71,7 +71,7 @@ progress{width:100%;height:16px}
 </head>
 <body>
 <header>
-  <h1>Fjord Animator <span style="font-size:14px;color:#666;font-weight:600">v0.4.7 · Build 00033</span></h1>
+  <h1>Fjord Animator <span style="font-size:14px;color:#666;font-weight:600">v0.5.0 · Build 00035</span></h1>
   <p>Billedets proportioner bevares. Sort = vand, hvid = land.</p>
 </header>
 
@@ -126,6 +126,39 @@ progress{width:100%;height:16px}
     </div>
   </div>
   <label class="check" style="margin-top:12px"><input id="invert" type="checkbox"> Byt sort og hvid om</label>
+
+  <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+    <h2 style="margin-bottom:10px">Fade</h2>
+    <div class="row">
+      <label class="check" style="min-width:200px">
+        <input id="fadeInEnabled" type="checkbox"> Fade ind ved start
+      </label>
+      <label class="field" style="max-width:180px">
+        <span>Varighed (0–10 sek.)</span>
+        <input id="fadeInDuration" type="number" min="0" max="10" step="0.1" value="3" disabled>
+      </label>
+    </div>
+
+    <div class="row" style="margin-top:10px">
+      <label class="check" style="min-width:200px">
+        <input id="fadeOutEnabled" type="checkbox"> Fade ud ved slutning
+      </label>
+      <label class="field" style="max-width:180px">
+        <span>Varighed (0–10 sek.)</span>
+        <input id="fadeOutDuration" type="number" min="0" max="10" step="0.1" value="3" disabled>
+      </label>
+    </div>
+
+    <div class="row" style="margin-top:12px">
+      <span style="font-size:13px;color:var(--muted)">Fadefarve</span>
+      <label class="check"><input type="radio" name="fadeColor" value="white" checked> Hvid</label>
+      <label class="check"><input type="radio" name="fadeColor" value="black"> Sort</label>
+    </div>
+
+    <p class="note" style="margin-bottom:0">
+      Fade-tiden er en del af filmens samlede længde. Fade ind og fade ud kan bruges hver for sig.
+    </p>
+  </div>
 </section>
 
 <section class="card">
@@ -167,6 +200,14 @@ const exportArea=$("exportArea"), shareButton=$("shareButton"), downloadButton=$
 const countBadge=$("countBadge"), imageWarning=$("imageWarning");
 let items=[], cancelRequested=false, activeRecorder=null, dragIndex=null;
 let finishedBlob=null, finishedFile=null, finishedUrl=null;
+
+function updateFadeControls(){
+  $("fadeInDuration").disabled=!$("fadeInEnabled").checked;
+  $("fadeOutDuration").disabled=!$("fadeOutEnabled").checked;
+}
+$("fadeInEnabled").addEventListener("change",updateFadeControls);
+$("fadeOutEnabled").addEventListener("change",updateFadeControls);
+updateFadeControls();
 
 function setStatus(t){statusEl.textContent=t}
 function updateCount(){
@@ -347,7 +388,7 @@ function drawPreview(img){
 
 $("saveProject").onclick=()=>{
   const project={
-    version:1,
+    version:2,
     settings:{
       filename:$("filename").value,
       duration:$("duration").value,
@@ -355,7 +396,12 @@ $("saveProject").onclick=()=>{
       resolution:$("resolution").value,
       fitMode:$("fitMode").value,
       threshold:$("threshold").value,
-      invert:$("invert").checked
+      invert:$("invert").checked,
+      fadeInEnabled:$("fadeInEnabled").checked,
+      fadeInDuration:$("fadeInDuration").value,
+      fadeOutEnabled:$("fadeOutEnabled").checked,
+      fadeOutDuration:$("fadeOutDuration").value,
+      fadeColor:document.querySelector('input[name="fadeColor"]:checked')?.value||"white"
     },
     order:items.map(x=>x.file.name),
     holds:Object.fromEntries(items.map(x=>[x.file.name,Number(x.hold||0)]))
@@ -375,6 +421,13 @@ $("loadProject").addEventListener("change",async e=>{
     if(s[k]!==undefined) $(k).value=s[k];
   }
   $("invert").checked=!!s.invert;
+  $("fadeInEnabled").checked=!!s.fadeInEnabled;
+  $("fadeOutEnabled").checked=!!s.fadeOutEnabled;
+  if(s.fadeInDuration!==undefined) $("fadeInDuration").value=s.fadeInDuration;
+  if(s.fadeOutDuration!==undefined) $("fadeOutDuration").value=s.fadeOutDuration;
+  const fadeColorRadio=document.querySelector(`input[name="fadeColor"][value="${s.fadeColor==="black"?"black":"white"}"]`);
+  if(fadeColorRadio)fadeColorRadio.checked=true;
+  updateFadeControls();
 
   if(Array.isArray(p.order)&&items.length){
     const map=new Map(items.map(x=>[x.file.name,x]));
@@ -539,10 +592,17 @@ renderBtn.onclick=async()=>{
     const holdSeconds=items.map(x=>Math.max(0,Number(String(x.hold||0).replace(",","."))||0));
     const invert=$("invert").checked;
     const fitMode=$("fitMode").value;
+    const fadeInEnabled=$("fadeInEnabled").checked;
+    const fadeOutEnabled=$("fadeOutEnabled").checked;
+    const fadeInSeconds=fadeInEnabled?Math.max(0,Number($("fadeInDuration").value)||0):0;
+    const fadeOutSeconds=fadeOutEnabled?Math.max(0,Number($("fadeOutDuration").value)||0):0;
+    const fadeColor=document.querySelector('input[name="fadeColor"]:checked')?.value==="black"?"black":"white";
 
     if(duration<2||duration>180)throw Error("Længden skal være mellem 2 og 180 sekunder.");
+    if(fadeInSeconds>10||fadeOutSeconds>10)throw Error("Fade-varigheden skal være mellem 0 og 10 sekunder.");
     const totalHoldSeconds=holdSeconds.reduce((a,b)=>a+b,0);
-    if(totalHoldSeconds>=duration)throw Error(`Holdtiderne er tilsammen ${totalHoldSeconds.toFixed(2)} sekunder og skal være kortere end filmens samlede længde på ${duration} sekunder.`);
+    const reservedSeconds=totalHoldSeconds+fadeInSeconds+fadeOutSeconds;
+    if(reservedSeconds>=duration)throw Error(`Holdtider og fade er tilsammen ${reservedSeconds.toFixed(2)} sekunder og skal være kortere end filmens samlede længde på ${duration} sekunder.`);
     if(!("VideoEncoder" in window) || !("VideoFrame" in window)){
       throw Error("Denne Safari-version understøtter ikke den præcise eksportmotor. Opdatér iPadOS/Safari og prøv igen.");
     }
@@ -631,6 +691,18 @@ renderBtn.onclick=async()=>{
       ctx.putImageData(imageData,0,0);
     };
 
+    const drawDistanceWithOpacity=(distance,opacity)=>{
+      drawDistance(distance);
+      const a=Math.max(0,Math.min(1,Number(opacity)||0));
+      if(a<1){
+        ctx.save();
+        ctx.globalAlpha=1-a;
+        ctx.fillStyle=fadeColor;
+        ctx.fillRect(0,0,w,h);
+        ctx.restore();
+      }
+    };
+
     // Tegner det originale nøglebillede direkte i outputopløsningen.
     // Det undgår, at færdige billeder og holdbilleder først bliver reduceret
     // til en 1-bit maske og derfor ser groft pixelerede ud.
@@ -652,11 +724,12 @@ renderBtn.onclick=async()=>{
     const totalFrames=Math.max(1,Math.round(duration*fps));
     const holdFrames=holdSeconds.map(v=>Math.round(v*fps));
     const totalHoldFrames=holdFrames.reduce((a,b)=>a+b,0);
-    let movementFrames=totalFrames-totalHoldFrames;
+    const fadeInFrames=Math.round(fadeInSeconds*fps);
+    const fadeOutFrames=Math.round(fadeOutSeconds*fps);
+    const reserveInitial=(fadeInFrames===0&&holdFrames[0]===0)?1:0;
+    let movementFrames=totalFrames-totalHoldFrames-fadeInFrames-fadeOutFrames-reserveInitial;
     const transitions=items.length-1;
-    const reserveInitial=holdFrames[0]===0?1:0;
-    movementFrames-=reserveInitial;
-    if(movementFrames<transitions)throw Error("Der er ikke nok bevægelsestid tilbage mellem billederne. Reducér holdtiderne eller forlæng filmen.");
+    if(movementFrames<transitions)throw Error("Der er ikke nok bevægelsestid tilbage mellem billederne. Reducér hold- eller fade-tiderne, eller forlæng filmen.");
 
     // Fordel bevægelsesframes efter hvor meget hvert billedpar ændrer sig.
     // Det fjerner den tydelige ændring i fart fra overgang til overgang.
@@ -719,9 +792,19 @@ renderBtn.onclick=async()=>{
 
     let maskA=imageToMask(items[0].img,w,h,threshold,invert,fitMode);
     let da=smoothDistance(signedDistance(maskA,w,h),w,h);
-    drawDistance(da);
 
-    if(reserveInitial)await encodeCurrentFrame();
+    if(fadeInFrames>0){
+      for(let f=0;f<fadeInFrames&&!cancelRequested;f++){
+        const alpha=fadeInFrames===1?1:f/(fadeInFrames-1);
+        drawDistanceWithOpacity(da,alpha);
+        setStatus(`Fader første billede ind…\n${Math.round(progress.value)} %`);
+        await encodeCurrentFrame();
+      }
+    }else{
+      drawDistance(da);
+      if(reserveInitial)await encodeCurrentFrame();
+    }
+
     if(holdFrames[0]>0){
       drawDistance(da);
       await repeatCurrentFrame(holdFrames[0],`Holder billede 1 i ${holdSeconds[0].toFixed(2)} sek.`);
@@ -761,6 +844,15 @@ renderBtn.onclick=async()=>{
       }
     }
 
+    if(fadeOutFrames>0&&!cancelRequested){
+      for(let f=0;f<fadeOutFrames&&!cancelRequested;f++){
+        const alpha=fadeOutFrames===1?0:1-f/(fadeOutFrames-1);
+        drawDistanceWithOpacity(da,alpha);
+        setStatus(`Fader sidste billede ud…\n${Math.round(progress.value)} %`);
+        await encodeCurrentFrame();
+      }
+    }
+
     if(cancelRequested){
       encoder.close();
       setStatus("Annulleret.");
@@ -784,7 +876,11 @@ renderBtn.onclick=async()=>{
     exportArea.style.display="block";
     shareButton.style.display=(navigator.share?"inline-block":"none");
     progress.value=100;
-    setStatus(`Færdig: ${name} · ${totalFrames} billeder · ${duration.toFixed(2)} sek. ved ${fps} billeder/sek. · jævn bevægelsesfordeling`);
+    const fadeSummary=[
+      fadeInFrames?`${fadeInSeconds.toFixed(1)} sek. fade ind`:"",
+      fadeOutFrames?`${fadeOutSeconds.toFixed(1)} sek. fade ud`:""
+    ].filter(Boolean).join(" · ");
+    setStatus(`Færdig: ${name} · ${totalFrames} billeder · ${duration.toFixed(2)} sek. ved ${fps} billeder/sek. · jævn bevægelsesfordeling${fadeSummary?` · ${fadeSummary} til ${fadeColor==="black"?"sort":"hvid"}`:""}`);
 
   }catch(e){
     const msg=(e&&e.message)?e.message:String(e);
@@ -805,7 +901,7 @@ renderBtn.onclick=async()=>{
 </script>
 
 <footer style="max-width:1100px;margin:0 auto 24px;padding:0 16px;color:#666;font-size:13px;text-align:center">
-  Fjord Animator · Version 0.4.7 · Build 00033 · 20. juli 2026
+  Fjord Animator · Version 0.5.0 · Build 00035 · 20. juli 2026
 </footer>
 </body>
 </html>
