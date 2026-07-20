@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="theme-color" content="#f3f4f6">
-<title>Fjord Animator v0.4.6 (Build 00032)</title>
+<title>Fjord Animator v0.4.7 (Build 00033)</title>
 <style>
 :root{
   --bg:#f3f4f6; --card:#fff; --text:#111; --muted:#666;
@@ -71,7 +71,7 @@ progress{width:100%;height:16px}
 </head>
 <body>
 <header>
-  <h1>Fjord Animator <span style="font-size:14px;color:#666;font-weight:600">v0.4.6 · Build 00032</span></h1>
+  <h1>Fjord Animator <span style="font-size:14px;color:#666;font-weight:600">v0.4.7 · Build 00033</span></h1>
   <p>Billedets proportioner bevares. Sort = vand, hvid = land.</p>
 </header>
 
@@ -465,6 +465,27 @@ function signedDistance(mask,w,h){
   return s;
 }
 
+// Udglatter afstandsfeltet ganske let. Uden dette består det færdige
+// nøglebillede af heltalsafstande fra pixel til pixel, mens selve morphen
+// indeholder brøkværdier og derfor ser glattere ud. Denne filtrering gør,
+// at nøglebilleder og morph får samme subpixel-glatte kant.
+function smoothDistance(src,w,h){
+  const out=new Float32Array(src.length);
+  for(let y=0;y<h;y++){
+    const ym=Math.max(0,y-1), yp=Math.min(h-1,y+1);
+    for(let x=0;x<w;x++){
+      const xm=Math.max(0,x-1), xp=Math.min(w-1,x+1);
+      const i=y*w+x;
+      out[i]=(
+        src[ym*w+xm] + 2*src[ym*w+x] + src[ym*w+xp] +
+        2*src[y*w+xm] + 4*src[i] + 2*src[y*w+xp] +
+        src[yp*w+xm] + 2*src[yp*w+x] + src[yp*w+xp]
+      )/16;
+    }
+  }
+  return out;
+}
+
 function transitionWeight(maskA,maskB){
   // Måler hvor stor en del af landskabet der faktisk ændrer sig. Store ændringer
   // får flere frames, små ændringer færre, så den oplevede hastighed bliver jævnere.
@@ -697,7 +718,7 @@ renderBtn.onclick=async()=>{
     }
 
     let maskA=imageToMask(items[0].img,w,h,threshold,invert,fitMode);
-    let da=signedDistance(maskA,w,h);
+    let da=smoothDistance(signedDistance(maskA,w,h),w,h);
     drawDistance(da);
 
     if(reserveInitial)await encodeCurrentFrame();
@@ -709,7 +730,7 @@ renderBtn.onclick=async()=>{
     for(let ti=0;ti<transitions&&!cancelRequested;ti++){
       setStatus(`Beregner overgang ${ti+1} af ${transitions}…\n${Math.round(progress.value)} %`);
       const maskB=imageToMask(items[ti+1].img,w,h,threshold,invert,fitMode);
-      const db=signedDistance(maskB,w,h);
+      const db=smoothDistance(signedDistance(maskB,w,h),w,h);
       const count=transitionFrames[ti];
       // En lille anti-alias-zone omkring kystlinjen giver subpixelbevægelse i stedet
       // for at kanten springer én hel pixel ad gangen.
@@ -784,7 +805,7 @@ renderBtn.onclick=async()=>{
 </script>
 
 <footer style="max-width:1100px;margin:0 auto 24px;padding:0 16px;color:#666;font-size:13px;text-align:center">
-  Fjord Animator · Version 0.4.6 · Build 00032 · 20. juli 2026
+  Fjord Animator · Version 0.4.7 · Build 00033 · 20. juli 2026
 </footer>
 </body>
 </html>
