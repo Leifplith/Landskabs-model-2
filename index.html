@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="theme-color" content="#f3f4f6">
-<title>Fjord Animator v0.3.2 (Build 00025)</title>
+<title>Fjord Animator v0.4.0 (Build 00026)</title>
 <style>
 :root{
   --bg:#f3f4f6; --card:#fff; --text:#111; --muted:#666;
@@ -71,7 +71,7 @@ progress{width:100%;height:16px}
 </head>
 <body>
 <header>
-  <h1>Fjord Animator <span style="font-size:14px;color:#666;font-weight:600">v0.3.2 · Build 00025</span></h1>
+  <h1>Fjord Animator <span style="font-size:14px;color:#666;font-weight:600">v0.4.0 · Build 00026</span></h1>
   <p>Billedets proportioner bevares. Sort = vand, hvid = land.</p>
 </header>
 
@@ -501,18 +501,18 @@ renderBtn.onclick=async()=>{
     const duration=Number($("duration").value);
     const fps=Number($("fps").value);
     const threshold=Number($("threshold").value);
-    const holdSeconds=items.map(x=>Math.max(0,Number(x.hold)||0));
+    const holdSeconds=items.map(x=>Math.max(0,Number(String(x.hold||0).replace(",","."))||0));
     const invert=$("invert").checked;
     const fitMode=$("fitMode").value;
 
     if(duration<2||duration>180)throw Error("Længden skal være mellem 2 og 180 sekunder.");
     const totalHoldSeconds=holdSeconds.reduce((a,b)=>a+b,0);
     if(totalHoldSeconds>=duration)throw Error(`Holdtiderne er tilsammen ${totalHoldSeconds.toFixed(2)} sekunder og skal være kortere end filmens samlede længde på ${duration} sekunder.`);
+    if(!("VideoEncoder" in window) || !("VideoFrame" in window)){
+      throw Error("Denne Safari-version understøtter ikke den præcise eksportmotor. Opdatér iPadOS/Safari og prøv igen.");
+    }
 
     const [w,h]=getOutputSize();
-    const mime=chooseMime();
-    if(!mime)throw Error("Safari kan ikke optage video på denne iPad-version.");
-
     renderBtn.disabled=true;
     cancelBtn.disabled=false;
     cancelRequested=false;
@@ -522,170 +522,168 @@ renderBtn.onclick=async()=>{
     if(finishedUrl)URL.revokeObjectURL(finishedUrl);
     finishedBlob=finishedFile=finishedUrl=null;
 
-    const canvas=document.createElement("canvas");
-    canvas.width=w;canvas.height=h;
-    const ctx=canvas.getContext("2d",{alpha:false});
-    const stream=canvas.captureStream(fps);
-    const chunks=[];
-
-    const recorder=new MediaRecorder(stream,{
-      mimeType:mime,
-      videoBitsPerSecond:Math.max(4e6,w*h*fps*.08)
-    });
-    activeRecorder=recorder;
-    recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)};
-    const done=new Promise(r=>recorder.onstop=r);
-    recorder.start(1000);
-
-    const total=Math.round(duration*fps);
-    const holdFrames=holdSeconds.map(v=>Math.round(v*fps));
-    const totalHoldFrames=holdFrames.reduce((a,b)=>a+b,0);
-    const transTotal=total-totalHoldFrames;
-    const transitions=items.length-1;
-    if(transTotal<transitions) throw Error("Der er ikke nok bevægelsestid tilbage mellem billederne. Reducér holdtiderne eller forlæng filmen.");
-    const base=Math.floor(transTotal/transitions);
-    const extra=transTotal%transitions;
-    let rendered=0;
-
-    const draw=m=>{
-      const id=ctx.createImageData(w,h),d=id.data;
-      for(let i=0,p=0;i<m.length;i++,p+=4){
-        const v=m[i]?0:255;
-        d[p]=d[p+1]=d[p+2]=v;
-        d[p+3]=255;
-      }
-      ctx.putImageData(id,0,0);
-    };
-
-    // MediaRecorder bruger virkelig tid. Vi pauser kun under de tunge
-    // afstandsberegninger mellem nøglebillederne. Vi pauser IKKE for hvert
-    // enkelt frame, da hyppige pause/resume-kald kan give afkortede filer i Safari.
-    const sleep=ms=>new Promise(r=>setTimeout(r,Math.max(0,ms)));
-    const waitForEvent=(obj,name)=>new Promise(r=>obj.addEventListener(name,r,{once:true}));
-    let pausedMs=0;
-    const recordingStart=performance.now();
-
-    async function pauseForTransitionCalculation(fn){
-      if(recorder.state==="recording"){
-        const paused=waitForEvent(recorder,"pause");
-        recorder.pause();
-        await paused;
-      }
-      const pauseStarted=performance.now();
-      const result=fn();
-      pausedMs+=performance.now()-pauseStarted;
-      if(recorder.state==="paused"){
-        const resumed=waitForEvent(recorder,"resume");
-        recorder.resume();
-        await resumed;
-      }
-      return result;
+    setStatus("Indlæser den præcise videomotor…");
+    let Muxer,ArrayBufferTarget;
+    try{
+      ({Muxer,ArrayBufferTarget}=await import("https://cdn.jsdelivr.net/npm/mp4-muxer@5.2.2/build/mp4-muxer.mjs"));
+    }catch{
+      throw Error("Videomotoren kunne ikke indlæses. Kontrollér internetforbindelsen og prøv igen.");
     }
 
-    async function finishFrame(){
-      rendered++;
-      const target=recordingStart+pausedMs+(rendered*1000/fps);
-      await sleep(target-performance.now());
-      progress.value=rendered/total*100;
+    const codecCandidates=[
+      {codec:"avc1.42001f",avc:{format:"avc"}},
+      {codec:"avc1.4d401f",avc:{format:"avc"}}
+    ];
+    let encoderConfig=null;
+    for(const candidate of codecCandidates){
+      const cfg={
+        ...candidate,
+        width:w,height:h,
+        bitrate:Math.max(4_000_000,Math.round(w*h*fps*.07)),
+        framerate:fps,
+        hardwareAcceleration:"prefer-hardware",
+        latencyMode:"quality"
+      };
+      try{
+        const support=await VideoEncoder.isConfigSupported(cfg);
+        if(support.supported){encoderConfig=support.config;break;}
+      }catch{}
+    }
+    if(!encoderConfig)throw Error("Denne iPad kan ikke kode MP4 i den valgte opløsning. Prøv en lavere outputopløsning.");
+
+    const target=new ArrayBufferTarget();
+    const muxer=new Muxer({
+      target,
+      video:{codec:"avc",width:w,height:h},
+      fastStart:"in-memory",
+      firstTimestampBehavior:"offset"
+    });
+
+    let encodeError=null;
+    const encoder=new VideoEncoder({
+      output:(chunk,meta)=>muxer.addVideoChunk(chunk,meta),
+      error:e=>{encodeError=e;}
+    });
+    encoder.configure(encoderConfig);
+
+    const canvas=document.createElement("canvas");
+    canvas.width=w;canvas.height=h;
+    const ctx=canvas.getContext("2d",{alpha:false,willReadFrequently:false});
+    ctx.imageSmoothingEnabled=false;
+    const imageData=ctx.createImageData(w,h);
+    const rgba=imageData.data;
+
+    const drawMask=mask=>{
+      for(let i=0,p=0;i<mask.length;i++,p+=4){
+        const v=mask[i]?0:255;
+        rgba[p]=rgba[p+1]=rgba[p+2]=v;
+        rgba[p+3]=255;
+      }
+      ctx.putImageData(imageData,0,0);
+    };
+
+    const totalFrames=Math.max(1,Math.round(duration*fps));
+    const holdFrames=holdSeconds.map(v=>Math.round(v*fps));
+    const totalHoldFrames=holdFrames.reduce((a,b)=>a+b,0);
+    let movementFrames=totalFrames-totalHoldFrames;
+    const transitions=items.length-1;
+    const reserveInitial=holdFrames[0]===0?1:0;
+    movementFrames-=reserveInitial;
+    if(movementFrames<transitions)throw Error("Der er ikke nok bevægelsestid tilbage mellem billederne. Reducér holdtiderne eller forlæng filmen.");
+
+    const base=Math.floor(movementFrames/transitions);
+    const extra=movementFrames%transitions;
+    const frameDurationUs=Math.round(1_000_000/fps);
+    let frameIndex=0;
+
+    const yieldToBrowser=()=>new Promise(r=>setTimeout(r,0));
+    async function encodeCurrentFrame(){
+      if(cancelRequested)return;
+      if(encodeError)throw encodeError;
+      while(encoder.encodeQueueSize>8){
+        await yieldToBrowser();
+        if(encodeError)throw encodeError;
+      }
+      const timestamp=Math.round(frameIndex*1_000_000/fps);
+      const frame=new VideoFrame(canvas,{timestamp,duration:frameDurationUs});
+      encoder.encode(frame,{keyFrame:frameIndex===0 || frameIndex%(fps*2)===0});
+      frame.close();
+      frameIndex++;
+      progress.value=frameIndex/totalFrames*100;
+      if(frameIndex%5===0)await yieldToBrowser();
+    }
+
+    async function repeatCurrentFrame(count,label){
+      for(let i=0;i<count&&!cancelRequested;i++){
+        setStatus(`${label}\n${Math.round(progress.value)} %`);
+        await encodeCurrentFrame();
+      }
     }
 
     let maskA=imageToMask(items[0].img,w,h,threshold,invert,fitMode);
-    draw(maskA);
+    drawMask(maskA);
 
-    for(let i=0;i<holdFrames[0]&&!cancelRequested;i++){
-      setStatus(`Holder billede 1 i ${holdSeconds[0].toFixed(2)} sek.\n${Math.round(progress.value)} %`);
-      await finishFrame();
-    }
+    if(reserveInitial)await encodeCurrentFrame();
+    if(holdFrames[0]>0)await repeatCurrentFrame(holdFrames[0],`Holder billede 1 i ${holdSeconds[0].toFixed(2)} sek.`);
 
     for(let ti=0;ti<transitions&&!cancelRequested;ti++){
-      setStatus(`Beregner overgang ${ti+1} af ${transitions}…`);
-
-      const calculated=await pauseForTransitionCalculation(()=>{
-        const maskB=imageToMask(items[ti+1].img,w,h,threshold,invert,fitMode);
-        return {
-          maskB,
-          da:signedDistance(maskA,w,h),
-          db:signedDistance(maskB,w,h)
-        };
-      });
-      const {maskB,da,db}=calculated;
+      setStatus(`Beregner overgang ${ti+1} af ${transitions}…\n${Math.round(progress.value)} %`);
+      const maskB=imageToMask(items[ti+1].img,w,h,threshold,invert,fitMode);
+      const da=signedDistance(maskA,w,h);
+      const db=signedDistance(maskB,w,h);
       const count=base+(ti<extra?1:0);
-      const frame=new Uint8Array(w*h);
+      const frameMask=new Uint8Array(w*h);
 
       for(let f=0;f<count&&!cancelRequested;f++){
         const u=(f+1)/count;
-        for(let i=0;i<frame.length;i++){
-          frame[i]=((1-u)*da[i]+u*db[i])<0?1:0;
-        }
-        draw(frame);
-        await finishFrame();
+        for(let i=0;i<frameMask.length;i++)frameMask[i]=((1-u)*da[i]+u*db[i])<0?1:0;
+        drawMask(frameMask);
         setStatus(`Animerer overgang ${ti+1} af ${transitions}\n${Math.round(progress.value)} %`);
+        await encodeCurrentFrame();
       }
-      maskA=maskB;
 
+      maskA=maskB;
       const keyIndex=ti+1;
-      if(holdFrames[keyIndex]>0 && !cancelRequested){
-        draw(maskA);
-        for(let i=0;i<holdFrames[keyIndex]&&!cancelRequested;i++){
-          setStatus(`Holder billede ${keyIndex+1} i ${holdSeconds[keyIndex].toFixed(2)} sek.\n${Math.round(progress.value)} %`);
-          await finishFrame();
-        }
+      if(holdFrames[keyIndex]>0&&!cancelRequested){
+        drawMask(maskA);
+        await repeatCurrentFrame(holdFrames[keyIndex],`Holder billede ${keyIndex+1} i ${holdSeconds[keyIndex].toFixed(2)} sek.`);
       }
     }
 
-    // Giv Safari tid til at optage det sidste viste frame og tøm derefter bufferen.
-    await sleep(Math.max(250,1000/fps*2));
-    if(recorder.state==="recording" && typeof recorder.requestData==="function") recorder.requestData();
-    await sleep(150);
-    if(recorder.state!=="inactive")recorder.stop();
-    await done;
-    activeRecorder=null;
-
     if(cancelRequested){
+      encoder.close();
       setStatus("Annulleret.");
       return;
     }
 
-    finishedBlob=new Blob(chunks,{type:mime});
-    if(finishedBlob.size<1000) throw Error("Videofilen blev ikke færdigskrevet. Prøv igen.");
-    const ext=mime.includes("mp4")?"mp4":"webm";
-    const name=`${safeFilename($("filename").value)}.${ext}`;
+    setStatus("Færdiggør MP4-filen…");
+    await encoder.flush();
+    if(encodeError)throw encodeError;
+    encoder.close();
+    muxer.finalize();
 
-    finishedFile=new File([finishedBlob],name,{type:mime});
+    finishedBlob=new Blob([target.buffer],{type:"video/mp4"});
+    if(finishedBlob.size<1000)throw Error("Videofilen blev ikke færdigskrevet. Prøv igen.");
+    const name=`${safeFilename($("filename").value)}.mp4`;
+    finishedFile=new File([finishedBlob],name,{type:"video/mp4"});
     finishedUrl=URL.createObjectURL(finishedBlob);
-
-    // Kontroller at Safari faktisk kan åbne hele den færdige fil, før der står “Færdig”.
-    let actualDuration=NaN;
-    try{
-      const probe=document.createElement("video");
-      probe.preload="metadata";
-      probe.src=finishedUrl;
-      actualDuration=await new Promise((resolve,reject)=>{
-        const timer=setTimeout(()=>reject(Error("timeout")),8000);
-        probe.onloadedmetadata=()=>{clearTimeout(timer);resolve(probe.duration)};
-        probe.onerror=()=>{clearTimeout(timer);reject(Error("video"))};
-      });
-    }catch{
-      throw Error("Videofilen blev skrevet, men Safari kunne ikke kontrollere, at den var komplet. Prøv igen.");
-    }
 
     downloadButton.href=finishedUrl;
     downloadButton.download=name;
     exportArea.style.display="block";
     shareButton.style.display=(navigator.share?"inline-block":"none");
-
-    const actualText=Number.isFinite(actualDuration)?` · faktisk længde ${actualDuration.toFixed(2)} sek.`:"";
-    setStatus(`Færdig: ${name} · ønsket længde ${duration.toFixed(2)} sek.${actualText}`);
     progress.value=100;
+    setStatus(`Færdig: ${name} · ${totalFrames} billeder · præcis ${duration.toFixed(2)} sek. ved ${fps} billeder/sek.`);
 
   }catch(e){
-    const msg=(e && e.message) ? e.message : String(e);
+    const msg=(e&&e.message)?e.message:String(e);
     const memoryProblem=/memory|allocation|out of memory|Array buffer/i.test(msg);
     alert(memoryProblem
-      ? "iPad'en har ikke nok ledig hukommelse til denne kombination af antal billeder, opløsning og billedhastighed. Prøv færre billeder, lavere opløsning eller færre billeder pr. sekund."
+      ? "iPad'en har ikke nok ledig hukommelse til denne kombination af antal billeder, opløsning og billedhastighed. Prøv lavere opløsning eller færre billeder pr. sekund."
       : msg);
-    setStatus(memoryProblem ? "Stoppet: ikke nok hukommelse." : "Stoppet.");
+    setStatus(memoryProblem?"Stoppet: ikke nok hukommelse.":"Stoppet.");
   }finally{
+    activeRecorder=null;
     renderBtn.disabled=false;
     cancelBtn.disabled=true;
   }
@@ -693,7 +691,7 @@ renderBtn.onclick=async()=>{
 </script>
 
 <footer style="max-width:1100px;margin:0 auto 24px;padding:0 16px;color:#666;font-size:13px;text-align:center">
-  Fjord Animator · Version 0.3.2 · Build 00025 · 19. juli 2026
+  Fjord Animator · Version 0.4.0 · Build 00026 · 20. juli 2026
 </footer>
 </body>
 </html>
