@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="theme-color" content="#f3f4f6">
-<title>Fjord Animator v0.4.1 (Build 00027)</title>
+<title>Fjord Animator v0.4.2 (Build 00028)</title>
 <style>
 :root{
   --bg:#f3f4f6; --card:#fff; --text:#111; --muted:#666;
@@ -71,7 +71,7 @@ progress{width:100%;height:16px}
 </head>
 <body>
 <header>
-  <h1>Fjord Animator <span style="font-size:14px;color:#666;font-weight:600">v0.4.1 · Build 00027</span></h1>
+  <h1>Fjord Animator <span style="font-size:14px;color:#666;font-weight:600">v0.4.2 · Build 00028</span></h1>
   <p>Billedets proportioner bevares. Sort = vand, hvid = land.</p>
 </header>
 
@@ -395,11 +395,17 @@ $("loadProject").addEventListener("change",async e=>{
 
 function getOutputSize(){
   const v=$("resolution").value;
-  if(v==="source"){
-    let w=items[0].img.width,h=items[0].img.height;
-    return[w-w%2,h-h%2];
-  }
-  return v.split("x").map(Number);
+  let sw=items[0].img.naturalWidth||items[0].img.width;
+  let sh=items[0].img.naturalHeight||items[0].img.height;
+  if(v==="source") return [Math.max(2,sw-sw%2),Math.max(2,sh-sh%2)];
+
+  // HD/FHD/4K betyder nu maksimal ramme, men originalens proportioner bevares.
+  const [mw,mh]=v.split("x").map(Number);
+  const scale=Math.min(mw/sw,mh/sh);
+  let w=Math.max(2,Math.round(sw*scale));
+  let h=Math.max(2,Math.round(sh*scale));
+  w-=w%2; h-=h%2;
+  return [w,h];
 }
 
 function imageToMask(img,w,h,threshold,invert,fitMode){
@@ -458,7 +464,14 @@ function signedDistance(mask,w,h){
   return s;
 }
 
-function smoothstep(t){return t*t*(3-2*t)}
+function transitionWeight(maskA,maskB){
+  // Måler hvor stor en del af landskabet der faktisk ændrer sig. Store ændringer
+  // får flere frames, små ændringer færre, så den oplevede hastighed bliver jævnere.
+  let changed=0;
+  const step=Math.max(1,Math.floor(maskA.length/250000));
+  for(let i=0;i<maskA.length;i+=step) if(maskA[i]!==maskB[i]) changed++;
+  return Math.max(1,changed);
+}
 
 function chooseMime(){
   const options=[
@@ -599,8 +612,29 @@ renderBtn.onclick=async()=>{
     movementFrames-=reserveInitial;
     if(movementFrames<transitions)throw Error("Der er ikke nok bevægelsestid tilbage mellem billederne. Reducér holdtiderne eller forlæng filmen.");
 
-    const base=Math.floor(movementFrames/transitions);
-    const extra=movementFrames%transitions;
+    // Fordel bevægelsesframes efter hvor meget hvert billedpar ændrer sig.
+    // Det fjerner den tydelige ændring i fart fra overgang til overgang.
+    setStatus("Analyserer bevægelsen mellem nøglebillederne…");
+    const transitionWeights=[];
+    let weightSum=0;
+    let previousMask=imageToMask(items[0].img,w,h,threshold,invert,fitMode);
+    for(let ti=0;ti<transitions;ti++){
+      const nextMask=imageToMask(items[ti+1].img,w,h,threshold,invert,fitMode);
+      const wt=transitionWeight(previousMask,nextMask);
+      transitionWeights.push(wt); weightSum+=wt;
+      previousMask=nextMask;
+      await new Promise(r=>setTimeout(r,0));
+    }
+    const transitionFrames=transitionWeights.map(wt=>Math.max(1,Math.floor(movementFrames*wt/weightSum)));
+    let assigned=transitionFrames.reduce((a,b)=>a+b,0);
+    let ri=0;
+    while(assigned<movementFrames){transitionFrames[ri%transitions]++;assigned++;ri++;}
+    while(assigned>movementFrames){
+      const j=ri%transitions;
+      if(transitionFrames[j]>1){transitionFrames[j]--;assigned--;}
+      ri++;
+    }
+
     const frameDurationUs=Math.round(1_000_000/fps);
     let frameIndex=0;
 
@@ -648,13 +682,19 @@ renderBtn.onclick=async()=>{
       const maskB=imageToMask(items[ti+1].img,w,h,threshold,invert,fitMode);
       const da=signedDistance(maskA,w,h);
       const db=signedDistance(maskB,w,h);
-      const count=base+(ti<extra?1:0);
-      const frameMask=new Uint8Array(w*h);
-
+      const count=transitionFrames[ti];
+      // En lille anti-alias-zone omkring kystlinjen giver subpixelbevægelse i stedet
+      // for at kanten springer én hel pixel ad gangen.
+      const edgeSoftness=1.25;
       for(let f=0;f<count&&!cancelRequested;f++){
         const u=(f+1)/count;
-        for(let i=0;i<frameMask.length;i++)frameMask[i]=((1-u)*da[i]+u*db[i])<0?1:0;
-        drawMask(frameMask);
+        for(let i=0,p=0;i<da.length;i++,p+=4){
+          const sd=(1-u)*da[i]+u*db[i];
+          const water=Math.max(0,Math.min(1,0.5-sd/(2*edgeSoftness)));
+          const v=Math.round(255*(1-water));
+          rgba[p]=rgba[p+1]=rgba[p+2]=v; rgba[p+3]=255;
+        }
+        ctx.putImageData(imageData,0,0);
         setStatus(`Animerer overgang ${ti+1} af ${transitions}\n${Math.round(progress.value)} %`);
         await encodeCurrentFrame();
       }
@@ -690,7 +730,7 @@ renderBtn.onclick=async()=>{
     exportArea.style.display="block";
     shareButton.style.display=(navigator.share?"inline-block":"none");
     progress.value=100;
-    setStatus(`Færdig: ${name} · ${totalFrames} billeder · præcis ${duration.toFixed(2)} sek. ved ${fps} billeder/sek.`);
+    setStatus(`Færdig: ${name} · ${totalFrames} billeder · ${duration.toFixed(2)} sek. ved ${fps} billeder/sek. · jævn bevægelsesfordeling`);
 
   }catch(e){
     const msg=(e&&e.message)?e.message:String(e);
@@ -711,7 +751,7 @@ renderBtn.onclick=async()=>{
 </script>
 
 <footer style="max-width:1100px;margin:0 auto 24px;padding:0 16px;color:#666;font-size:13px;text-align:center">
-  Fjord Animator · Version 0.4.1 · Build 00027 · 20. juli 2026
+  Fjord Animator · Version 0.4.2 · Build 00028 · 20. juli 2026
 </footer>
 </body>
 </html>
