@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="theme-color" content="#f3f4f6">
-<title>Fjord Animator v0.4.0 (Build 00026)</title>
+<title>Fjord Animator v0.4.1 (Build 00027)</title>
 <style>
 :root{
   --bg:#f3f4f6; --card:#fff; --text:#111; --muted:#666;
@@ -71,7 +71,7 @@ progress{width:100%;height:16px}
 </head>
 <body>
 <header>
-  <h1>Fjord Animator <span style="font-size:14px;color:#666;font-weight:600">v0.4.0 · Build 00026</span></h1>
+  <h1>Fjord Animator <span style="font-size:14px;color:#666;font-weight:600">v0.4.1 · Build 00027</span></h1>
   <p>Billedets proportioner bevares. Sort = vand, hvid = land.</p>
 </header>
 
@@ -530,9 +530,17 @@ renderBtn.onclick=async()=>{
       throw Error("Videomotoren kunne ikke indlæses. Kontrollér internetforbindelsen og prøv igen.");
     }
 
-    const codecCandidates=[
-      {codec:"avc1.42001f",avc:{format:"avc"}},
-      {codec:"avc1.4d401f",avc:{format:"avc"}}
+    // H.264-profil og level vælges efter opløsningen. 4K kræver level 5.1;
+    // de tidligere level 3.1-profiler kunne blive accepteret af Safari, men fejlede
+    // først, når den egentlige kodning begyndte.
+    const codecCandidates=(w>=3000 || h>=2000) ? [
+      {codec:"avc1.640033",avc:{format:"avc"}}, // High, level 5.1
+      {codec:"avc1.4d4033",avc:{format:"avc"}}, // Main, level 5.1
+      {codec:"avc1.420033",avc:{format:"avc"}}  // Baseline, level 5.1
+    ] : [
+      {codec:"avc1.64002a",avc:{format:"avc"}}, // High, level 4.2
+      {codec:"avc1.4d402a",avc:{format:"avc"}}, // Main, level 4.2
+      {codec:"avc1.42002a",avc:{format:"avc"}}  // Baseline, level 4.2
     ];
     let encoderConfig=null;
     for(const candidate of codecCandidates){
@@ -600,7 +608,7 @@ renderBtn.onclick=async()=>{
     async function encodeCurrentFrame(){
       if(cancelRequested)return;
       if(encodeError)throw encodeError;
-      while(encoder.encodeQueueSize>8){
+      while(encoder.encodeQueueSize>2){
         await yieldToBrowser();
         if(encodeError)throw encodeError;
       }
@@ -610,7 +618,16 @@ renderBtn.onclick=async()=>{
       frame.close();
       frameIndex++;
       progress.value=frameIndex/totalFrames*100;
-      if(frameIndex%5===0)await yieldToBrowser();
+
+      // Safari/iPadOS bliver mere stabil, når videokoderen jævnligt får lov
+      // til at tømme sin interne kø. Det gør eksporten langsommere, men undgår
+      // “Encoding task failed” ved lange og højopløste film.
+      if(frameIndex===1 || frameIndex%50===0){
+        await encoder.flush();
+        if(encodeError)throw encodeError;
+      }else if(frameIndex%5===0){
+        await yieldToBrowser();
+      }
     }
 
     async function repeatCurrentFrame(count,label){
@@ -678,9 +695,12 @@ renderBtn.onclick=async()=>{
   }catch(e){
     const msg=(e&&e.message)?e.message:String(e);
     const memoryProblem=/memory|allocation|out of memory|Array buffer/i.test(msg);
+    const encodingProblem=/encoding task failed|encoder|operationerror/i.test(msg);
     alert(memoryProblem
       ? "iPad'en har ikke nok ledig hukommelse til denne kombination af antal billeder, opløsning og billedhastighed. Prøv lavere opløsning eller færre billeder pr. sekund."
-      : msg);
+      : encodingProblem
+        ? "iPadens videokoder kunne ikke gennemføre eksporten. Denne version bruger nu den korrekte 4K-profil og tømmer kodningskøen løbende. Hvis fejlen stadig opstår, prøv først 1920×1080 for at kontrollere resten af projektet."
+        : msg);
     setStatus(memoryProblem?"Stoppet: ikke nok hukommelse.":"Stoppet.");
   }finally{
     activeRecorder=null;
@@ -691,7 +711,7 @@ renderBtn.onclick=async()=>{
 </script>
 
 <footer style="max-width:1100px;margin:0 auto 24px;padding:0 16px;color:#666;font-size:13px;text-align:center">
-  Fjord Animator · Version 0.4.0 · Build 00026 · 20. juli 2026
+  Fjord Animator · Version 0.4.1 · Build 00027 · 20. juli 2026
 </footer>
 </body>
 </html>
