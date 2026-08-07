@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="theme-color" content="#f3f4f6">
-<title>Fjord Animator v0.5.0 (Build 00035)</title>
+<title>Fjord Animator v0.5.1 (Build 00036)</title>
 <style>
 :root{
   --bg:#f3f4f6; --card:#fff; --text:#111; --muted:#666;
@@ -71,7 +71,7 @@ progress{width:100%;height:16px}
 </head>
 <body>
 <header>
-  <h1>Fjord Animator <span style="font-size:14px;color:#666;font-weight:600">v0.5.0 · Build 00035</span></h1>
+  <h1>Fjord Animator <span style="font-size:14px;color:#666;font-weight:600">v0.5.1 · Build 00036</span></h1>
   <p>Billedets proportioner bevares. Sort = vand, hvid = land.</p>
 </header>
 
@@ -548,6 +548,30 @@ function transitionWeight(maskA,maskB){
   return Math.max(1,changed);
 }
 
+function drawProgressiveTransition(maskA,maskB,da,db,u,rgba,ctx,imageData,edgeSoftness){
+  // Uændrede områder forbliver identiske med det forrige billede.
+  // Kun de pixels, der skifter mellem land og vand, animeres frem mod næste billede.
+  const t=Math.max(0,Math.min(1,u));
+  for(let i=0,p=0;i<maskA.length;i++,p+=4){
+    let water;
+    if(maskA[i]===maskB[i]){
+      water=maskA[i];
+    }else if(maskA[i]===0 && maskB[i]===1){
+      // Vand breder sig ind: fronten vokser frem mod det nye billede.
+      const sd=db[i] + (1-t)*Math.max(2,Math.abs(db[i]-da[i]));
+      water=Math.max(0,Math.min(1,0.5-sd/(2*edgeSoftness)));
+    }else{
+      // Vand trækker sig tilbage: det gamle vand forsvinder gradvist.
+      const sd=da[i] - t*Math.max(2,Math.abs(db[i]-da[i]));
+      water=Math.max(0,Math.min(1,0.5-sd/(2*edgeSoftness)));
+    }
+    const v=Math.round(255*(1-water));
+    rgba[p]=rgba[p+1]=rgba[p+2]=v;
+    rgba[p+3]=255;
+  }
+  ctx.putImageData(imageData,0,0);
+}
+
 function chooseMime(){
   const options=[
     "video/mp4;codecs=h264",
@@ -815,21 +839,15 @@ renderBtn.onclick=async()=>{
       const maskB=imageToMask(items[ti+1].img,w,h,threshold,invert,fitMode);
       const db=smoothDistance(signedDistance(maskB,w,h),w,h);
       const count=transitionFrames[ti];
-      // En lille anti-alias-zone omkring kystlinjen giver subpixelbevægelse i stedet
-      // for at kanten springer én hel pixel ad gangen.
+      // Bevar det forrige billede stabilt og lad kun forskellen til det næste
+      // billede vokse frem. Det reducerer den pulserende effekt.
       for(let f=0;f<count&&!cancelRequested;f++){
         const isFinalFrame=f===count-1;
         if(isFinalFrame){
           drawDistance(db);
         }else{
           const u=(f+1)/count;
-          for(let i=0,p=0;i<da.length;i++,p+=4){
-            const sd=(1-u)*da[i]+u*db[i];
-            const water=Math.max(0,Math.min(1,0.5-sd/(2*edgeSoftness)));
-            const v=Math.round(255*(1-water));
-            rgba[p]=rgba[p+1]=rgba[p+2]=v; rgba[p+3]=255;
-          }
-          ctx.putImageData(imageData,0,0);
+          drawProgressiveTransition(maskA,maskB,da,db,u,rgba,ctx,imageData,edgeSoftness);
         }
         setStatus(`Animerer overgang ${ti+1} af ${transitions}\n${Math.round(progress.value)} %`);
         await encodeCurrentFrame();
@@ -901,7 +919,7 @@ renderBtn.onclick=async()=>{
 </script>
 
 <footer style="max-width:1100px;margin:0 auto 24px;padding:0 16px;color:#666;font-size:13px;text-align:center">
-  Fjord Animator · Version 0.5.0 · Build 00035 · 20. juli 2026
+  Fjord Animator · Version 0.5.1 · Build 00036 · 20. juli 2026
 </footer>
 </body>
 </html>
