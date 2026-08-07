@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="theme-color" content="#f3f4f6">
-<title>Fjord Animator v0.5.2 (Build 00037)</title>
+<title>Fjord Animator v0.5.3 (Build 00038)</title>
 <style>
 :root{
   --bg:#f3f4f6; --card:#fff; --text:#111; --muted:#666;
@@ -71,7 +71,7 @@ progress{width:100%;height:16px}
 </head>
 <body>
 <header>
-  <h1>Fjord Animator <span style="font-size:14px;color:#666;font-weight:600">v0.5.2 · Build 00037</span></h1>
+  <h1>Fjord Animator <span style="font-size:14px;color:#666;font-weight:600">v0.5.3 · Build 00038</span></h1>
   <p>Billedets proportioner bevares. Sort = vand, hvid = land.</p>
 </header>
 
@@ -778,6 +778,22 @@ renderBtn.onclick=async()=>{
       ctx.restore();
     };
 
+    const blendSourceOverCurrent=(img,alpha)=>{
+      const a=Math.max(0,Math.min(1,Number(alpha)||0));
+      if(a<=0)return;
+      ctx.save();
+      ctx.setTransform(1,0,0,1,0,0);
+      ctx.imageSmoothingEnabled=true;
+      ctx.imageSmoothingQuality="high";
+      ctx.globalAlpha=a;
+      const iw=img.naturalWidth||img.width;
+      const ih=img.naturalHeight||img.height;
+      const scale=fitMode==="fill" ? Math.max(w/iw,h/ih) : Math.min(w/iw,h/ih);
+      const dw=iw*scale, dh=ih*scale;
+      ctx.drawImage(img,(w-dw)/2,(h-dh)/2,dw,dh);
+      ctx.restore();
+    };
+
     const totalFrames=Math.max(1,Math.round(duration*fps));
     const holdFrames=holdSeconds.map(v=>Math.round(v*fps));
     const totalHoldFrames=holdFrames.reduce((a,b)=>a+b,0);
@@ -885,16 +901,19 @@ renderBtn.onclick=async()=>{
       for(let f=0;f<fadeInFrames&&!cancelRequested;f++){
         const alpha=fadeInFrames===1?1:f/(fadeInFrames-1);
         drawDistanceWithOpacity(da,alpha);
+        // De sidste fade-frames glider diskret over i originalen.
+        if(alpha>0.88)blendSourceOverCurrent(items[0].img,(alpha-0.88)/0.12);
         setStatus(`Fader første billede ind…\n${Math.round(progress.value)} %`);
         await encodeCurrentFrame();
       }
+      drawSourceImage(items[0].img);
     }else{
-      drawDistance(da);
+      drawSourceImage(items[0].img);
       if(reserveInitial)await encodeCurrentFrame();
     }
 
     if(holdFrames[0]>0){
-      drawDistance(da);
+      drawSourceImage(items[0].img);
       await repeatCurrentFrame(holdFrames[0],`Holder billede 1 i ${holdSeconds[0].toFixed(2)} sek.`);
     }
 
@@ -904,14 +923,20 @@ renderBtn.onclick=async()=>{
       const db=smoothDistance(signedDistance(maskB,w,h),w,h);
       const count=transitionFrames[ti];
       // Bevar det forrige billede stabilt og lad kun forskellen til det næste
-      // billede vokse frem. Det reducerer den pulserende effekt.
+      // billede vokse frem. De sidste frames glider over i det originale nøglebillede,
+      // så den endelige streg bevarer originalens opløsning og anti-aliasing.
+      const sourceBlendFrames=Math.min(Math.max(2,Math.round(fps*0.20)),Math.max(2,Math.floor(count*0.15)));
       for(let f=0;f<count&&!cancelRequested;f++){
-        const isFinalFrame=f===count-1;
-        if(isFinalFrame){
-          drawDistance(db);
+        const u=(f+1)/count;
+        if(f===count-1){
+          drawSourceImage(items[ti+1].img);
         }else{
-          const u=(f+1)/count;
           drawProgressiveTransition(maskA,maskB,da,db,u,rgba,ctx,imageData,edgeSoftness);
+          const blendStart=Math.max(0,count-sourceBlendFrames-1);
+          if(f>=blendStart){
+            const blend=(f-blendStart+1)/(count-blendStart);
+            blendSourceOverCurrent(items[ti+1].img,blend);
+          }
         }
         setStatus(`Animerer overgang ${ti+1} af ${transitions}\n${Math.round(progress.value)} %`);
         await encodeCurrentFrame();
@@ -921,7 +946,7 @@ renderBtn.onclick=async()=>{
       da=db;
       const keyIndex=ti+1;
       if(holdFrames[keyIndex]>0&&!cancelRequested){
-        drawDistance(db);
+        drawSourceImage(items[keyIndex].img);
         await repeatCurrentFrame(holdFrames[keyIndex],`Holder billede ${keyIndex+1} i ${holdSeconds[keyIndex].toFixed(2)} sek.`);
       }
     }
@@ -929,7 +954,21 @@ renderBtn.onclick=async()=>{
     if(fadeOutFrames>0&&!cancelRequested){
       for(let f=0;f<fadeOutFrames&&!cancelRequested;f++){
         const alpha=fadeOutFrames===1?0:1-f/(fadeOutFrames-1);
-        drawDistanceWithOpacity(da,alpha);
+        ctx.save();
+        ctx.setTransform(1,0,0,1,0,0);
+        ctx.globalAlpha=1;
+        ctx.fillStyle=fadeColor;
+        ctx.fillRect(0,0,w,h);
+        ctx.globalAlpha=alpha;
+        const img=items[items.length-1].img;
+        const iw=img.naturalWidth||img.width;
+        const ih=img.naturalHeight||img.height;
+        const scale=fitMode==="fill" ? Math.max(w/iw,h/ih) : Math.min(w/iw,h/ih);
+        const dw=iw*scale, dh=ih*scale;
+        ctx.imageSmoothingEnabled=true;
+        ctx.imageSmoothingQuality="high";
+        ctx.drawImage(img,(w-dw)/2,(h-dh)/2,dw,dh);
+        ctx.restore();
         setStatus(`Fader sidste billede ud…\n${Math.round(progress.value)} %`);
         await encodeCurrentFrame();
       }
@@ -983,7 +1022,7 @@ renderBtn.onclick=async()=>{
 </script>
 
 <footer style="max-width:1100px;margin:0 auto 24px;padding:0 16px;color:#666;font-size:13px;text-align:center">
-  Fjord Animator · Version 0.5.2 · Build 00037 · 7. august 2026
+  Fjord Animator · Version 0.5.3 · Build 00038 · 7. august 2026
 </footer>
 </body>
 </html>
