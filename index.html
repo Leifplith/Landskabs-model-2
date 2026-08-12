@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="theme-color" content="#f3f4f6">
-<title>Fjord Animator v0.5.4 (Build 00039)</title>
+<title>Fjord Animator v0.5.5 (Build 00040)</title>
 <style>
 :root{
   --bg:#f3f4f6; --card:#fff; --text:#111; --muted:#666;
@@ -71,7 +71,7 @@ progress{width:100%;height:16px}
 </head>
 <body>
 <header>
-  <h1>Fjord Animator <span style="font-size:14px;color:#666;font-weight:600">v0.5.4 · Build 00039</span></h1>
+  <h1>Fjord Animator <span style="font-size:14px;color:#666;font-weight:600">v0.5.5 · Build 00040</span></h1>
   <p>Billedets proportioner bevares. Sort = vand, hvid = land.</p>
 </header>
 
@@ -133,7 +133,7 @@ progress{width:100%;height:16px}
   </div>
   <label class="check" style="margin-top:12px"><input id="invert" type="checkbox"> Byt sort og hvid om</label>
   <p id="alphaNote" class="note" style="display:none;margin:10px 0 0;color:#0560b8;font-weight:600">
-    Transparent eksport gemmer de sorte streger/former med alfa-kanal og gør den hvide baggrund gennemsigtig. Resultatet bliver en ZIP med PNG-frames til compositing i et filmprogram.
+    Transparent eksport bruger gennemsigtige PNG-billeders egen alfa-kanal direkte, så de originale bløde kanter bevares. Billeder med hvid baggrund virker fortsat. Resultatet bliver en ZIP med PNG-frames til et filmprogram.
   </p>
 
   <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
@@ -217,7 +217,7 @@ function updateFadeControls(){
 function updateExportControls(){
   const transparent=$("exportMode").value==="png-alpha";
   $("alphaNote").style.display=transparent?"block":"none";
-  document.querySelectorAll('input[name="fadeColor"]').forEach(x=>x.disabled=transparent);
+  document.querySelectorAll('input[name="fadeColor"]').forEach(x=>x.disabled=false);
 }
 $("fadeInEnabled").addEventListener("change",updateFadeControls);
 $("fadeOutEnabled").addEventListener("change",updateFadeControls);
@@ -517,17 +517,28 @@ function imageToMask(img,w,h,threshold,invert,fitMode){
   const x=c.getContext("2d",{willReadFrequently:true});
   x.imageSmoothingEnabled=true;
   x.imageSmoothingQuality="high";
-  x.fillStyle="white";
-  x.fillRect(0,0,w,h);
+  x.clearRect(0,0,w,h);
   const iw=img.naturalWidth||img.width, ih=img.naturalHeight||img.height;
   const scale=fitMode==="fill" ? Math.max(w/iw,h/ih) : Math.min(w/iw,h/ih);
   const dw=iw*scale, dh=ih*scale;
   x.drawImage(img,(w-dw)/2,(h-dh)/2,dw,dh);
   const d=x.getImageData(0,0,w,h).data;
   const m=new Uint8Array(w*h);
+
+  // Ægte transparente PNG'er: brug alfa direkte som form.
+  // Almindelige JPG/PNG'er: brug fortsat sort/hvid-tærsklen.
+  let hasTransparency=false;
+  for(let i=3;i<d.length;i+=Math.max(4,Math.floor(d.length/200000/4)*4)){
+    if(d[i]<250){hasTransparency=true;break;}
+  }
   for(let i=0,p=0;i<d.length;i+=4,p++){
-    const g=d[i]*.299+d[i+1]*.587+d[i+2]*.114;
-    let water=g<threshold;
+    let water;
+    if(hasTransparency){
+      water=d[i+3]>8;
+    }else{
+      const g=d[i]*.299+d[i+1]*.587+d[i+2]*.114;
+      water=g<threshold;
+    }
     if(invert)water=!water;
     m[p]=water?1:0;
   }
@@ -830,14 +841,20 @@ renderBtn.onclick=async()=>{
       if(transparentExport){
         const id=sx.getImageData(0,0,w,h);
         const d=id.data;
-        for(let p=0;p<d.length;p+=4){
-          const lum=d[p]*.299+d[p+1]*.587+d[p+2]*.114;
-          const originalAlpha=d[p+3]/255;
-          const alpha=Math.round((255-lum)*originalAlpha);
-          d[p]=d[p+1]=d[p+2]=0;
-          d[p+3]=alpha;
+        let hasTransparency=false;
+        for(let p=3;p<d.length;p+=Math.max(4,Math.floor(d.length/200000/4)*4)){
+          if(d[p]<250){hasTransparency=true;break;}
         }
-        sx.putImageData(id,0,0);
+        if(!hasTransparency){
+          // Bagudkompatibilitet for billeder med hvid baggrund.
+          for(let p=0;p<d.length;p+=4){
+            const lum=d[p]*.299+d[p+1]*.587+d[p+2]*.114;
+            d[p]=d[p+1]=d[p+2]=0;
+            d[p+3]=Math.round(255-lum);
+          }
+          sx.putImageData(id,0,0);
+        }
+        // Ved ægte transparent PNG ændres intet: original RGB og alfa bevares.
       }
       return source;
     };
@@ -864,6 +881,21 @@ renderBtn.onclick=async()=>{
       ctx.save();
       ctx.setTransform(1,0,0,1,0,0);
       ctx.globalAlpha=a;
+      ctx.drawImage(source,0,0);
+      ctx.restore();
+    };
+
+    const drawTransparentFadeFrame=(img,imageAlpha,colorAlpha)=>{
+      const source=makeSourceCanvas(img);
+      ctx.save();
+      ctx.setTransform(1,0,0,1,0,0);
+      ctx.clearRect(0,0,w,h);
+      if(colorAlpha>0){
+        ctx.globalAlpha=Math.max(0,Math.min(1,colorAlpha));
+        ctx.fillStyle=fadeColor;
+        ctx.fillRect(0,0,w,h);
+      }
+      ctx.globalAlpha=Math.max(0,Math.min(1,imageAlpha));
       ctx.drawImage(source,0,0);
       ctx.restore();
     };
@@ -984,9 +1016,13 @@ renderBtn.onclick=async()=>{
     if(fadeInFrames>0){
       for(let f=0;f<fadeInFrames&&!cancelRequested;f++){
         const alpha=fadeInFrames===1?1:f/(fadeInFrames-1);
-        drawDistanceWithOpacity(da,alpha);
-        // De sidste fade-frames glider diskret over i originalen.
-        if(alpha>0.88)blendSourceOverCurrent(items[0].img,(alpha-0.88)/0.12);
+        if(transparentExport){
+          drawTransparentFadeFrame(items[0].img,alpha,1-alpha);
+        }else{
+          drawDistanceWithOpacity(da,alpha);
+          // De sidste fade-frames glider diskret over i originalen.
+          if(alpha>0.88)blendSourceOverCurrent(items[0].img,(alpha-0.88)/0.12);
+        }
         setStatus(`Fader første billede ind…\n${Math.round(progress.value)} %`);
         await encodeCurrentFrame();
       }
@@ -1039,13 +1075,7 @@ renderBtn.onclick=async()=>{
       for(let f=0;f<fadeOutFrames&&!cancelRequested;f++){
         const alpha=fadeOutFrames===1?0:1-f/(fadeOutFrames-1);
         if(transparentExport){
-          drawSourceImage(items[items.length-1].img);
-          ctx.save();
-          ctx.globalCompositeOperation="destination-in";
-          ctx.globalAlpha=alpha;
-          ctx.fillStyle="#000";
-          ctx.fillRect(0,0,w,h);
-          ctx.restore();
+          drawTransparentFadeFrame(items[items.length-1].img,alpha,1-alpha);
         }else{
           ctx.save();
           ctx.setTransform(1,0,0,1,0,0);
@@ -1069,7 +1099,7 @@ renderBtn.onclick=async()=>{
     }
 
     if(cancelRequested){
-      encoder.close();
+      if(encoder)encoder.close();
       setStatus("Annulleret.");
       return;
     }
@@ -1108,7 +1138,7 @@ renderBtn.onclick=async()=>{
       fadeOutFrames?`${fadeOutSeconds.toFixed(1)} sek. fade ud`:""
     ].filter(Boolean).join(" · ");
     const typeSummary=transparentExport?"transparent PNG-sekvens":"MP4-video";
-    setStatus(`Færdig: ${name} · ${totalFrames} frames · ${duration.toFixed(2)} sek. ved ${fps} billeder/sek. · ${typeSummary}${fadeSummary?` · ${fadeSummary}${transparentExport?" til transparent":` til ${fadeColor==="black"?"sort":"hvid"}`}`:""}`);
+    setStatus(`Færdig: ${name} · ${totalFrames} frames · ${duration.toFixed(2)} sek. ved ${fps} billeder/sek. · ${typeSummary}${fadeSummary?` · ${fadeSummary}` til ${fadeColor==="black"?"sort":"hvid"}``:""}`);
 
   }catch(e){
     const msg=(e&&e.message)?e.message:String(e);
@@ -1129,7 +1159,7 @@ renderBtn.onclick=async()=>{
 </script>
 
 <footer style="max-width:1100px;margin:0 auto 24px;padding:0 16px;color:#666;font-size:13px;text-align:center">
-  Fjord Animator · Version 0.5.4 · Build 00039 · 12. august 2026
+  Fjord Animator · Version 0.5.5 · Build 00040 · 12. august 2026
 </footer>
 </body>
 </html>
